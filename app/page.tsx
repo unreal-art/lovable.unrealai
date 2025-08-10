@@ -2146,21 +2146,42 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     captureUrlScreenshot(url);
     
     try {
-      addChatMessage('Scraping website content...', 'system');
-      const scrapeResponse = await fetch('/api/scrape-url-enhanced', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
-      });
+      addChatMessage('Scraping website content and capturing visual layout...', 'system');
       
-      if (!scrapeResponse.ok) {
-        throw new Error(`Scraping failed: ${scrapeResponse.status}`);
+      // Enhanced scraping with parallel screenshot capture
+      const [scrapeResponse, screenshotResponse] = await Promise.allSettled([
+        fetch('/api/scrape-url-enhanced', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        }),
+        fetch('/api/scrape-screenshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        })
+      ]);
+      
+      // Handle scraping response
+      if (scrapeResponse.status === 'rejected' || !scrapeResponse.value.ok) {
+        throw new Error(`Scraping failed: ${scrapeResponse.status === 'rejected' ? scrapeResponse.reason : scrapeResponse.value.status}`);
       }
       
-      const scrapeData = await scrapeResponse.json();
+      const scrapeData = await scrapeResponse.value.json();
       
       if (!scrapeData.success) {
         throw new Error(scrapeData.error || 'Failed to scrape website');
+      }
+      
+      // Handle screenshot response (optional - don't fail if screenshot fails)
+      let screenshotData = null;
+      if (screenshotResponse.status === 'fulfilled' && screenshotResponse.value.ok) {
+        screenshotData = await screenshotResponse.value.json();
+        if (screenshotData.success) {
+          addChatMessage('Screenshot captured for visual analysis', 'system');
+        }
+      } else {
+        addChatMessage('Screenshot capture failed - proceeding with content analysis only', 'system');
       }
       
       addChatMessage(`Scraped ${scrapeData.content.length} characters from ${url}`, 'system');
@@ -2188,12 +2209,26 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       
       addChatMessage('Analyzing and generating React recreation...', 'system');
       
-      const recreatePrompt = `I scraped this website and want you to recreate it as a modern React application.
+      const recreatePrompt = `I scraped this website and want you to recreate it as a modern React application with enhanced analysis.
 
 URL: ${url}
 
 SCRAPED CONTENT:
 ${scrapeData.content}
+
+${screenshotData?.success ? `
+VISUAL LAYOUT CONTEXT:
+Screenshot was captured for reference (not sent to AI model for compatibility).
+Please analyze the scraped content structure to infer:
+- Layout patterns and visual hierarchy from content organization
+- Brand elements from text descriptions and naming
+- Typography patterns from heading structures in markdown
+- Component boundaries from content sections and formatting
+- Interactive elements from links and form elements in content
+- Navigation patterns from menu structures in scraped data
+
+Focus on extracting layout insights from the content structure and text formatting.
+` : ''}
 
 ${homeContextInput ? `ADDITIONAL CONTEXT/REQUIREMENTS FROM USER:
 ${homeContextInput}
@@ -2209,10 +2244,20 @@ REQUIREMENTS:
    - Text: #ffffff
    - Links: #60a5fa
    - Accent: #3b82f6`}
-5. Make it fully responsive
+5. Make it fully responsive with mobile-first design
 6. Include hover effects and smooth transitions
 7. Create separate components for major sections (Header, Hero, Features, etc.)
-8. Use semantic HTML5 elements
+8. Use semantic HTML5 elements for accessibility
+9. Implement proper focus states and keyboard navigation
+10. Add loading states and error handling where appropriate
+
+ENHANCED ANALYSIS INSTRUCTIONS:
+- Analyze the content structure to intelligently organize into appropriate React components
+- Identify hero sections, features, testimonials, pricing, and contact areas automatically
+- Extract and preserve any brand colors, typography patterns, and visual hierarchy
+- Maintain authentic brand representation while modernizing the implementation
+- Use smart content detection to create logical component boundaries
+- Implement accessibility best practices including proper heading hierarchy and ARIA labels
 
 IMPORTANT CONSTRAINTS:
 - DO NOT use React Router or any routing libraries
@@ -2223,17 +2268,30 @@ IMPORTANT CONSTRAINTS:
 - Use Tailwind CSS for ALL styling (no custom CSS files)
 - Make sure the app actually renders visible content
 - Create ALL components that you reference in imports
+- Follow accessibility guidelines for inclusive design
+- Implement performance optimizations like lazy loading for images
 
-IMAGE HANDLING RULES:
-- When the scraped content includes images, USE THE ORIGINAL IMAGE URLS whenever appropriate
-- Keep existing images from the scraped site (logos, product images, hero images, icons, etc.)
-- Use the actual image URLs provided in the scraped content, not placeholders
-- Only use placeholder images or generic services when no real images are available
-- For company logos and brand images, ALWAYS use the original URLs to maintain brand identity
-- If scraped data contains image URLs, include them in your img tags
-- Example: If you see "https://example.com/logo.png" in the scraped content, use that exact URL
+ENHANCED IMAGE HANDLING:
+- Preserve original image URLs from scraped content when available
+- Implement proper fallback strategies for broken images
+- Add meaningful alt text based on image context and purpose
+- Use lazy loading for images below the fold
+- Ensure responsive image sizing with proper aspect ratios
+- Include error handling for failed image loads
+- For logos: Use company name in alt text
+- For decorative images: Use empty alt="" attribute
+- For complex images: Provide detailed descriptions
 
-Focus on the key sections and content, making it clean and modern while preserving visual assets.`;
+ACCESSIBILITY & PERFORMANCE FOCUS:
+- Implement proper heading hierarchy (h1 → h2 → h3)
+- Add focus states for all interactive elements
+- Ensure keyboard navigation works throughout
+- Use semantic HTML elements (main, nav, section, article, footer)
+- Optimize for screen readers with proper ARIA labels
+- Implement lazy loading and efficient rendering patterns
+- Create loading states for better user experience
+
+Focus on creating a modern, accessible, and performant recreation that preserves the original content while improving the user experience.`;
       
       setGenerationProgress(prev => ({
         isGenerating: true,
