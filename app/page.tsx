@@ -230,16 +230,16 @@ export default function AISandboxPage() {
     }
   }, [showHomeScreen, homeUrlInput]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Periodic error monitoring
+  // Periodic error monitoring with reduced frequency to prevent performance issues
   useEffect(() => {
     if (!showHomeScreen && sandboxData) {
       // Check for errors immediately
       checkViteErrors();
       
-      // Set up periodic checking
+      // Set up periodic checking with longer interval to reduce load
       const errorCheckInterval = setInterval(() => {
         checkViteErrors();
-      }, 10000); // Check every 10 seconds
+      }, 30000); // Check every 30 seconds instead of 10 to reduce load
       
       return () => clearInterval(errorCheckInterval);
     }
@@ -384,8 +384,8 @@ export default function AISandboxPage() {
         setSandboxData(data.sandboxData);
         updateStatus('Sandbox active', true);
         
-        // Check for Vite errors when sandbox is healthy
-        checkViteErrors();
+        // Check for Vite errors when sandbox is healthy (but don't block)
+        setTimeout(() => checkViteErrors(), 1000);
       } else if (data.active && !data.healthy) {
         // Sandbox exists but not responding
         updateStatus('Sandbox not responding', false);
@@ -401,10 +401,23 @@ export default function AISandboxPage() {
     }
   };
 
-  // Monitor Vite errors
+  // Monitor Vite errors with timeout protection
   const checkViteErrors = async () => {
     try {
-      const response = await fetch('/api/monitor-vite-logs');
+      // Add timeout protection to prevent hanging
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
+      const response = await fetch('/api/monitor-vite-logs', {
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      
       const data = await response.json();
       
       if (data.success && data.hasErrors) {
@@ -414,6 +427,9 @@ export default function AISandboxPage() {
       }
     } catch (error) {
       console.error('Failed to check Vite errors:', error);
+      // Don't let error checking failures break the UI
+      // Just clear errors if we can't check them
+      setViteErrors([]);
     }
   };
 
@@ -460,10 +476,10 @@ export default function AISandboxPage() {
           addChatMessage(`💡 AI Suggestion: ${result.message}`, 'system');
         }
         
-        // Recheck errors after fix attempt
+        // Recheck errors after fix attempt (with delay to prevent conflicts)
         setTimeout(() => {
           checkViteErrors();
-        }, 2000);
+        }, 5000);
       } else {
         addChatMessage(`❌ Could not fix error: ${result.error || 'Unknown error'}`, 'system');
       }

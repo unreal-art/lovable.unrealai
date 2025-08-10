@@ -296,18 +296,18 @@ export async function POST(request: NextRequest) {
     
     // First, always check the global state for active sandbox
     let sandbox = global.activeSandbox;
-    
+
     // If we don't have a sandbox in this instance but we have a sandboxId,
     // reconnect to the existing sandbox
-    if (!sandbox && sandboxId) {
-      console.log(`[apply-ai-code-stream] Sandbox ${sandboxId} not in this instance, attempting reconnect...`);
-      
+    if (sandboxId) { // Check for sandboxId directly
+      console.log(`[apply-ai-code-stream] Sandbox ${sandboxId} provided, attempting to connect...`);
+
       try {
-        // Reconnect to the existing sandbox using E2B's connect method
+        // Always try to connect using the ID from the request
         sandbox = await Sandbox.connect(sandboxId, { apiKey: process.env.E2B_API_KEY });
-        console.log(`[apply-ai-code-stream] Successfully reconnected to sandbox ${sandboxId}`);
-        
-        // Store the reconnected sandbox globally for this instance
+        console.log(`[apply-ai-code-stream] Successfully connected to sandbox ${sandboxId}`);
+
+        // Store the connected sandbox globally for this instance
         global.activeSandbox = sandbox;
         
         // Update sandbox data if needed
