@@ -86,6 +86,18 @@ export default function AISandboxPage() {
   const [sandboxFiles, setSandboxFiles] = useState<Record<string, string>>({});
   const [fileStructure, setFileStructure] = useState<string>('');
   
+  // Error Resolution Agent state
+  const [viteErrors, setViteErrors] = useState<Array<{
+    type: string;
+    message: string;
+    file?: string;
+    line?: number;
+    column?: number;
+    fixable?: boolean;
+    severity?: string;
+  }>>([]);
+  const [isFixingError, setIsFixingError] = useState<string | null>(null); // Track which error is being fixed
+  
   const [conversationContext, setConversationContext] = useState<{
     scrapedWebsites: Array<{ url: string; content: any; timestamp: Date }>;
     generatedComponents: Array<{ name: string; path: string; content: string }>;
@@ -201,6 +213,21 @@ export default function AISandboxPage() {
       captureUrlScreenshot(screenshotUrl);
     }
   }, [showHomeScreen, homeUrlInput]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Periodic error monitoring
+  useEffect(() => {
+    if (!showHomeScreen && sandboxData) {
+      // Check for errors immediately
+      checkViteErrors();
+      
+      // Set up periodic checking
+      const errorCheckInterval = setInterval(() => {
+        checkViteErrors();
+      }, 10000); // Check every 10 seconds
+      
+      return () => clearInterval(errorCheckInterval);
+    }
+  }, [showHomeScreen, sandboxData]); // eslint-disable-line react-hooks/exhaustive-deps
 
 
   useEffect(() => {
@@ -340,6 +367,9 @@ export default function AISandboxPage() {
       if (data.active && data.healthy && data.sandboxData) {
         setSandboxData(data.sandboxData);
         updateStatus('Sandbox active', true);
+        
+        // Check for Vite errors when sandbox is healthy
+        checkViteErrors();
       } else if (data.active && !data.healthy) {
         // Sandbox exists but not responding
         updateStatus('Sandbox not responding', false);
@@ -352,6 +382,80 @@ export default function AISandboxPage() {
       console.error('Failed to check sandbox status:', error);
       setSandboxData(null);
       updateStatus('Error', false);
+    }
+  };
+
+  // Monitor Vite errors
+  const checkViteErrors = async () => {
+    try {
+      const response = await fetch('/api/monitor-vite-logs');
+      const data = await response.json();
+      
+      if (data.success && data.hasErrors) {
+        setViteErrors(data.errors || []);
+      } else {
+        setViteErrors([]);
+      }
+    } catch (error) {
+      console.error('Failed to check Vite errors:', error);
+    }
+  };
+
+  // Fix error with AI
+  const fixErrorWithAI = async (error: {
+    type: string;
+    message: string;
+    file?: string;
+    line?: number;
+    column?: number;
+  }) => {
+    const errorSignature = `${error.type}-${error.message.substring(0, 50)}`;
+    setIsFixingError(errorSignature);
+    
+    try {
+      addChatMessage(`🔧 Fixing ${error.type} error with AI...`, 'system');
+      
+      const response = await fetch('/api/resolve-vite-error', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          errorMessage: error.message,
+          filePath: error.file,
+          errorType: error.type,
+          line: error.line,
+          column: error.column,
+          model: aiModel
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        if (result.fixType === 'package-install') {
+          // Install missing package
+          addChatMessage(`📦 Installing missing package: ${result.installCommand}`, 'system');
+          await installPackages([result.installCommand]);
+        } else if (result.fixType === 'code-fix') {
+          // Apply code fix
+          addChatMessage(`📝 Applying code fix to ${result.filePath}`, 'system');
+          await applyGeneratedCode(result.correctedContent, true); // true indicates this is an edit
+        } else if (result.fixType === 'guidance') {
+          // Show guidance message
+          addChatMessage(`💡 AI Suggestion: ${result.message}`, 'system');
+        }
+        
+        // Recheck errors after fix attempt
+        setTimeout(() => {
+          checkViteErrors();
+        }, 2000);
+      } else {
+        addChatMessage(`❌ Could not fix error: ${result.error || 'Unknown error'}`, 'system');
+      }
+    } catch (error) {
+      console.error('Failed to fix error with AI:', error);
+      addChatMessage(`❌ Failed to fix error: ${(error as Error).message}`, 'system');
+    } finally {
+      setIsFixingError(null);
     }
   };
 
@@ -1119,6 +1223,8 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                         <button
                           onClick={() => setSelectedFile(null)}
                           className="hover:bg-black/20 p-1 rounded transition-colors"
+                          aria-label="Close file preview"
+                          title="Close file preview"
                         >
                           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1326,10 +1432,18 @@ Tip: I automatically detect and install npm packages from your code imports (lik
               <div className="mx-6 mb-6">
                 <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
                   <div 
-                    className="h-full bg-gradient-to-r from-orange-500 to-orange-400 transition-all duration-300"
-                    style={{
-                      width: `${(generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 100}%`
-                    }}
+                    className={`h-full bg-gradient-to-r from-orange-500 to-orange-400 progress-bar ${
+                      Math.round((generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 10) * 10 === 100 ? 'w-progress-100' :
+                      Math.round((generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 10) * 10 === 90 ? 'w-progress-90' :
+                      Math.round((generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 10) * 10 === 80 ? 'w-progress-80' :
+                      Math.round((generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 10) * 10 === 70 ? 'w-progress-70' :
+                      Math.round((generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 10) * 10 === 60 ? 'w-progress-60' :
+                      Math.round((generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 10) * 10 === 50 ? 'w-progress-50' :
+                      Math.round((generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 10) * 10 === 40 ? 'w-progress-40' :
+                      Math.round((generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 10) * 10 === 30 ? 'w-progress-30' :
+                      Math.round((generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 10) * 10 === 20 ? 'w-progress-20' :
+                      Math.round((generationProgress.currentComponent / Math.max(generationProgress.components.length, 1)) * 10) * 10 === 10 ? 'w-progress-10' : 'w-progress-0'
+                    }`}
                   />
                 </div>
               </div>
@@ -2740,11 +2854,11 @@ Focus on the key sections and content, making it clean and modern.`;
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[1200px] h-[1200px] bg-gradient-radial from-orange-200/20 to-transparent rounded-full blur-[120px]" />
             
             {/* Giant Glowing Orb - Center Bottom */}
-            <div className="absolute bottom-0 left-1/2 w-[800px] h-[800px] animate-[orbShrink_3s_ease-out_forwards]" style={{ transform: 'translateX(-50%) translateY(45%)' }}>
+            <div className="absolute bottom-0 left-1/2 w-[800px] h-[800px] animate-[orbShrink_3s_ease-out_forwards] orb-transform">
               <div className="relative w-full h-full">
                 <div className="absolute inset-0 bg-orange-600 rounded-full blur-[100px] opacity-30 animate-pulse"></div>
-                <div className="absolute inset-16 bg-orange-500 rounded-full blur-[80px] opacity-40 animate-pulse" style={{ animationDelay: '0.3s' }}></div>
-                <div className="absolute inset-32 bg-orange-400 rounded-full blur-[60px] opacity-50 animate-pulse" style={{ animationDelay: '0.6s' }}></div>
+                <div className="absolute inset-16 bg-orange-500 rounded-full blur-[80px] opacity-40 animate-pulse orb-delay-1"></div>
+                <div className="absolute inset-32 bg-orange-400 rounded-full blur-[60px] opacity-50 animate-pulse orb-delay-2"></div>
                 <div className="absolute inset-48 bg-yellow-300 rounded-full blur-[40px] opacity-60"></div>
               </div>
             </div>
@@ -2760,10 +2874,9 @@ Focus on the key sections and content, making it clean and modern.`;
                 setHomeScreenFading(false);
               }, 500);
             }}
-            className="absolute top-8 right-8 text-gray-500 hover:text-gray-700 transition-all duration-300 opacity-0 hover:opacity-100 bg-white/80 backdrop-blur-sm p-2 rounded-lg shadow-sm"
-            style={{ opacity: 0 }}
-            onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
-            onMouseLeave={(e) => e.currentTarget.style.opacity = '0'}
+            className="absolute top-8 right-8 text-gray-500 hover:text-gray-700 transition-all duration-300 opacity-0 hover:opacity-100 bg-white/80 backdrop-blur-sm p-2 rounded-lg shadow-sm close-button-hover"
+            aria-label="Close home screen"
+            title="Close home screen"
           >
             <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -2810,7 +2923,11 @@ Focus on the key sections and content, making it clean and modern.`;
               
               <form onSubmit={handleHomeScreenSubmit} className="mt-5 max-w-3xl mx-auto">
                 <div className="w-full relative group">
+                  <label htmlFor="website-url-input" className="sr-only">
+                    Enter website URL to redesign
+                  </label>
                   <input
+                    id="website-url-input"
                     type="text"
                     value={homeUrlInput}
                     onChange={(e) => {
@@ -2827,13 +2944,9 @@ Focus on the key sections and content, making it clean and modern.`;
                         setSelectedStyle(null);
                       }
                     }}
-                    placeholder=" "
-                    aria-placeholder="https://firecrawl.dev"
-                    className="h-[3.25rem] w-full resize-none focus-visible:outline-none focus-visible:ring-orange-500 focus-visible:ring-2 rounded-[18px] text-sm text-[#36322F] px-4 pr-12 border-[.75px] border-border bg-white"
-                    style={{
-                      boxShadow: '0 0 0 1px #e3e1de66, 0 1px 2px #5f4a2e14, 0 4px 6px #5f4a2e0a, 0 40px 40px -24px #684b2514',
-                      filter: 'drop-shadow(rgba(249, 224, 184, 0.3) -0.731317px -0.731317px 35.6517px)'
-                    }}
+                    placeholder="https://firecrawl.dev"
+                    aria-label="Enter website URL to redesign"
+                    className="h-[3.25rem] w-full resize-none focus-visible:outline-none focus-visible:ring-orange-500 focus-visible:ring-2 rounded-[18px] text-sm text-[#36322F] px-4 pr-12 border-[.75px] border-border bg-white url-input-shadow"
                     autoFocus
                   />
                   <div 
@@ -2842,7 +2955,7 @@ Focus on the key sections and content, making it clean and modern.`;
                       homeUrlInput ? 'opacity-0' : 'opacity-100'
                     }`}
                   >
-                    <span className="text-[#605A57]/50" style={{ fontFamily: 'monospace' }}>
+                    <span className="text-[#605A57]/50 font-mono-family">
                       https://firecrawl.dev
                     </span>
                   </div>
@@ -2958,7 +3071,11 @@ Focus on the key sections and content, making it clean and modern.`;
               
               {/* Model Selector */}
               <div className="mt-6 flex items-center justify-center animate-[fadeIn_1s_ease-out]">
+                <label htmlFor="ai-model-selector-home" className="sr-only">
+                  Select AI model
+                </label>
                 <select
+                  id="ai-model-selector-home"
                   value={aiModel}
                   onChange={(e) => {
                     const newModel = e.target.value;
@@ -2970,10 +3087,7 @@ Focus on the key sections and content, making it clean and modern.`;
                     }
                     router.push(`/?${params.toString()}`);
                   }}
-                  className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent"
-                  style={{
-                    boxShadow: '0 0 0 1px #e3e1de66, 0 1px 2px #5f4a2e14'
-                  }}
+                  className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent model-selector-shadow"
                 >
                   {appConfig.ai.availableModels.map(model => (
                     <option key={model} value={model}>
@@ -2983,6 +3097,88 @@ Focus on the key sections and content, making it clean and modern.`;
                 </select>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Error Resolution Banner */}
+      {viteErrors.length > 0 && !showHomeScreen && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-3">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-5 h-5 bg-red-500 rounded-full flex items-center justify-center">
+                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </div>
+                <h3 className="text-sm font-medium text-red-800">
+                  {viteErrors.length} Error{viteErrors.length !== 1 ? 's' : ''} Detected
+                </h3>
+              </div>
+              <div className="space-y-2">
+                {viteErrors.slice(0, 3).map((error, index) => {
+                  const errorSignature = `${error.type}-${error.message.substring(0, 50)}`;
+                  const isFixing = isFixingError === errorSignature;
+                  
+                  return (
+                    <div key={index} className="flex items-start justify-between bg-white rounded-lg p-3 border border-red-200">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                            {error.type}
+                          </span>
+                          {error.file && (
+                            <span className="text-xs text-gray-500 truncate">
+                              {error.file.split('/').pop()}
+                              {error.line && `:${error.line}`}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-700 break-words">
+                          {error.message.length > 120 ? `${error.message.substring(0, 120)}...` : error.message}
+                        </p>
+                      </div>
+                      {error.fixable && (
+                        <button
+                          onClick={() => fixErrorWithAI(error)}
+                          disabled={isFixing}
+                          className="ml-3 flex-shrink-0 inline-flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {isFixing ? (
+                            <>
+                              <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
+                              Fixing...
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                              </svg>
+                              Fix with AI
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                {viteErrors.length > 3 && (
+                  <p className="text-xs text-gray-600 mt-2">
+                    ... and {viteErrors.length - 3} more error{viteErrors.length - 3 !== 1 ? 's' : ''}
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setViteErrors([])}
+              className="ml-4 text-red-400 hover:text-red-600 transition-colors"
+              title="Dismiss errors"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </div>
       )}
@@ -2997,7 +3193,11 @@ Focus on the key sections and content, making it clean and modern.`;
         </div>
         <div className="flex items-center gap-2">
           {/* Model Selector - Left side */}
+          <label htmlFor="ai-model-selector-main" className="sr-only">
+            Select AI model
+          </label>
           <select
+            id="ai-model-selector-main"
             value={aiModel}
             onChange={(e) => {
               const newModel = e.target.value;
@@ -3166,8 +3366,9 @@ Focus on the key sections and content, making it clean and modern.`;
                           return (
                             <div
                               key={`applied-${fileIdx}`}
-                              className="inline-flex items-center gap-1 px-2 py-1 bg-[#36322F] text-white rounded-[10px] text-xs animate-fade-in-up"
-                              style={{ animationDelay: `${fileIdx * 30}ms` }}
+                              className={`inline-flex items-center gap-1 px-2 py-1 bg-[#36322F] text-white rounded-[10px] text-xs ${
+                                fileIdx <= 10 ? `file-item-delay-${fileIdx}` : 'file-item-delay-default'
+                              }`}
                             >
                               <span className={`inline-block w-1.5 h-1.5 rounded-full ${
                                 fileType === 'css' ? 'bg-blue-400' :
@@ -3191,8 +3392,9 @@ Focus on the key sections and content, making it clean and modern.`;
                         {generationProgress.files.map((file, fileIdx) => (
                           <div
                             key={`complete-${fileIdx}`}
-                            className="inline-flex items-center gap-1 px-2 py-1 bg-[#36322F] text-white rounded-[10px] text-xs animate-fade-in-up"
-                            style={{ animationDelay: `${fileIdx * 30}ms` }}
+                            className={`inline-flex items-center gap-1 px-2 py-1 bg-[#36322F] text-white rounded-[10px] text-xs ${
+                              fileIdx <= 10 ? `file-item-delay-${fileIdx}` : 'file-item-delay-default'
+                            }`}
                           >
                             <span className={`inline-block w-1.5 h-1.5 rounded-full ${
                               file.type === 'css' ? 'bg-blue-400' :
@@ -3228,8 +3430,9 @@ Focus on the key sections and content, making it clean and modern.`;
                   {generationProgress.files.map((file, idx) => (
                     <div
                       key={`file-${idx}`}
-                      className="inline-flex items-center gap-1 px-2 py-1 bg-[#36322F] text-white rounded-[10px] text-xs animate-fade-in-up"
-                      style={{ animationDelay: `${idx * 30}ms` }}
+                      className={`inline-flex items-center gap-1 px-2 py-1 bg-[#36322F] text-white rounded-[10px] text-xs ${
+                        idx <= 10 ? `file-item-delay-${idx}` : 'file-item-delay-default'
+                      }`}
                     >
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
@@ -3240,8 +3443,9 @@ Focus on the key sections and content, making it clean and modern.`;
                   
                   {/* Show current file being generated */}
                   {generationProgress.currentFile && (
-                    <div className="flex items-center gap-1 px-2 py-1 bg-[#36322F]/70 text-white rounded-[10px] text-xs animate-pulse"
-                      style={{ animationDelay: `${generationProgress.files.length * 30}ms` }}>
+                    <div className={`flex items-center gap-1 px-2 py-1 bg-[#36322F]/70 text-white rounded-[10px] text-xs animate-pulse ${
+                      generationProgress.files.length <= 10 ? `file-item-delay-${generationProgress.files.length}` : 'file-item-delay-default'
+                    }`}>
                       <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       {generationProgress.currentFile.path.split('/').pop()}
                     </div>

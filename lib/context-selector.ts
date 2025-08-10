@@ -19,39 +19,12 @@ export function selectFilesForEdit(
   // Analyze the edit intent
   const editIntent = analyzeEditIntent(userPrompt, manifest);
   
-  // Get the files based on intent - only edit target files, but provide all others as context
+  // Get the files based on intent - only edit target files, but build smart local context
   const primaryFiles = editIntent.targetFiles;
   const allFiles = Object.keys(manifest.files);
-  let contextFiles = allFiles.filter(file => !primaryFiles.includes(file));
   
-  // ALWAYS include key files in context if they exist and aren't already primary files
-  const keyFiles: string[] = [];
-  
-  // App.jsx is most important - shows component structure
-  const appFile = allFiles.find(f => f.endsWith('App.jsx') || f.endsWith('App.tsx'));
-  if (appFile && !primaryFiles.includes(appFile)) {
-    keyFiles.push(appFile);
-  }
-  
-  // Include design system files for style context
-  const tailwindConfig = allFiles.find(f => f.endsWith('tailwind.config.js') || f.endsWith('tailwind.config.ts'));
-  if (tailwindConfig && !primaryFiles.includes(tailwindConfig)) {
-    keyFiles.push(tailwindConfig);
-  }
-  
-  const indexCss = allFiles.find(f => f.endsWith('index.css') || f.endsWith('globals.css'));
-  if (indexCss && !primaryFiles.includes(indexCss)) {
-    keyFiles.push(indexCss);
-  }
-  
-  // Include package.json to understand dependencies
-  const packageJson = allFiles.find(f => f.endsWith('package.json'));
-  if (packageJson && !primaryFiles.includes(packageJson)) {
-    keyFiles.push(packageJson);
-  }
-  
-  // Put key files at the beginning of context for visibility
-  contextFiles = [...keyFiles, ...contextFiles.filter(f => !keyFiles.includes(f))];
+  // Build local context around primary files instead of including all files
+  const contextFiles = buildLocalContext(primaryFiles, manifest, allFiles);
   
   // Build enhanced system prompt
   const systemPrompt = buildSystemPrompt(
@@ -68,6 +41,149 @@ export function selectFilesForEdit(
     systemPrompt,
     editIntent,
   };
+}
+
+/**
+ * Build local context around primary files by finding related files
+ */
+function buildLocalContext(
+  primaryFiles: string[],
+  manifest: FileManifest,
+  allFiles: string[]
+): string[] {
+  const contextFiles = new Set<string>();
+  
+  // ALWAYS include essential global files for general context
+  const essentialFiles: string[] = [];
+  
+  // App.jsx is most important - shows component structure
+  const appFile = allFiles.find(f => f.endsWith('App.jsx') || f.endsWith('App.tsx'));
+  if (appFile && !primaryFiles.includes(appFile)) {
+    essentialFiles.push(appFile);
+  }
+  
+  // Include design system files for style context
+  const tailwindConfig = allFiles.find(f => f.endsWith('tailwind.config.js') || f.endsWith('tailwind.config.ts'));
+  if (tailwindConfig && !primaryFiles.includes(tailwindConfig)) {
+    essentialFiles.push(tailwindConfig);
+  }
+  
+  const indexCss = allFiles.find(f => f.endsWith('index.css') || f.endsWith('globals.css'));
+  if (indexCss && !primaryFiles.includes(indexCss)) {
+    essentialFiles.push(indexCss);
+  }
+  
+  // Add essential files to context
+  essentialFiles.forEach(file => contextFiles.add(file));
+  
+  // For each primary file, build local context
+  for (const primaryFile of primaryFiles) {
+    const fileInfo = manifest.files[primaryFile];
+    if (!fileInfo) continue;
+    
+    // 1. Find directly imported local files
+    if (fileInfo.imports) {
+      for (const importInfo of fileInfo.imports) {
+        if (importInfo.isLocal && importInfo.source) {
+          // Resolve relative import to full path
+          const resolvedPath = resolveImportPath(primaryFile, importInfo.source, allFiles);
+          if (resolvedPath && !primaryFiles.includes(resolvedPath)) {
+            contextFiles.add(resolvedPath);
+          }
+        }
+      }
+    }
+    
+    // 2. Find components that import this primary file using componentTree
+    if (fileInfo.componentInfo) {
+      const componentName = fileInfo.componentInfo.name;
+      const treeNode = manifest.componentTree[componentName];
+      
+      if (treeNode) {
+        // Find components that import this component
+        for (const importingComponentName of treeNode.importedBy) {
+          const importingNode = manifest.componentTree[importingComponentName];
+          if (importingNode && !primaryFiles.includes(importingNode.file)) {
+            contextFiles.add(importingNode.file);
+          }
+        }
+        
+        // Also include components that this component imports (its dependencies)
+        for (const importedComponentName of treeNode.imports) {
+          const importedNode = manifest.componentTree[importedComponentName];
+          if (importedNode && !primaryFiles.includes(importedNode.file)) {
+            contextFiles.add(importedNode.file);
+          }
+        }
+      }
+    }
+  }
+  
+  // Convert Set to Array and put essential files first for better visibility
+  return [...essentialFiles, ...Array.from(contextFiles).filter(f => !essentialFiles.includes(f))];
+}
+
+/**
+ * Resolve a relative import path to the actual file path
+ */
+function resolveImportPath(fromFile: string, importSource: string, allFiles: string[]): string | null {
+  if (!importSource.startsWith('.')) {
+    return null; // Not a relative import
+  }
+  
+  // Get the directory of the importing file
+  const fromDir = fromFile.substring(0, fromFile.lastIndexOf('/'));
+  
+  // Build possible paths with common extensions
+  const possibleExtensions = ['.jsx', '.tsx', '.js', '.ts'];
+  const possiblePaths = [];
+  
+  // Handle relative path resolution
+  const resolvePath = (base: string, relative: string): string => {
+    const parts = base.split('/').filter(p => p);
+    const relativeParts = relative.split('/').filter(p => p);
+    
+    for (const part of relativeParts) {
+      if (part === '..') {
+        parts.pop();
+      } else if (part !== '.') {
+        parts.push(part);
+      }
+    }
+    
+    return '/' + parts.join('/');
+  };
+  
+  // Handle different import patterns
+  if (importSource.endsWith('/')) {
+    // Directory import - look for index files
+    const resolvedBasePath = resolvePath(fromDir, importSource);
+    possiblePaths.push(`${resolvedBasePath}/index.jsx`, `${resolvedBasePath}/index.tsx`, `${resolvedBasePath}/index.js`, `${resolvedBasePath}/index.ts`);
+  } else {
+    // File import - resolve relative path properly
+    const resolvedPath = resolvePath(fromDir, importSource);
+    
+    // If already has extension, use as-is
+    if (possibleExtensions.some(ext => importSource.endsWith(ext))) {
+      possiblePaths.push(resolvedPath);
+    } else {
+      // Try with different extensions
+      possibleExtensions.forEach(ext => {
+        possiblePaths.push(`${resolvedPath}${ext}`);
+      });
+    }
+  }
+  
+  // Find the first matching file
+  for (const possiblePath of possiblePaths) {
+    // Normalize path and check if it exists in allFiles
+    const normalizedPath = possiblePath.replace(/\/+/g, '/');
+    if (allFiles.includes(normalizedPath)) {
+      return normalizedPath;
+    }
+  }
+  
+  return null;
 }
 
 /**
@@ -311,23 +427,38 @@ export function formatFilesForAI(
 ): string {
   const sections: string[] = [];
   
-  // Add primary files
-  sections.push('## Files to Edit (ONLY OUTPUT THESE FILES)\n');
-  sections.push('🚨 You MUST ONLY generate the files listed below. Do NOT generate any other files! 🚨\n');
+  // Add clear header explaining the file organization
+  sections.push('# File Organization for Edit Request\n');
+  sections.push('The files below are organized into two categories to help you understand what to modify vs what to reference:\n');
+  
+  // Add primary files with enhanced heading
+  sections.push('## 📝 Files to Edit\n');
+  sections.push('**THESE are the files you should modify to fulfill the user\'s request.**\n');
+  sections.push('🚨 You MUST ONLY generate the files listed in this section. Do NOT generate any other files! 🚨\n');
   sections.push('⚠️ CRITICAL: Return the COMPLETE file - NEVER truncate with "..." or skip any lines! ⚠️\n');
   sections.push('The file MUST include ALL imports, ALL functions, ALL JSX, and ALL closing tags.\n\n');
-  for (const [path, content] of Object.entries(primaryFiles)) {
-    sections.push(`### ${path}
+  
+  if (Object.keys(primaryFiles).length === 0) {
+    sections.push('*No primary files identified for editing. Please analyze the request and determine which files need modification.*\n\n');
+  } else {
+    for (const [path, content] of Object.entries(primaryFiles)) {
+      sections.push(`### ${path}
 **IMPORTANT: This is the COMPLETE file. Your output must include EVERY line shown below, modified only where necessary.**
 \`\`\`${getFileExtension(path)}
 ${content}
 \`\`\`
 `);
+    }
   }
   
-  // Add context files if any - but truncate large files
+  // Add context files with enhanced heading and explanation
   if (Object.keys(contextFiles).length > 0) {
-    sections.push('\n## Context Files (Reference Only - Do Not Edit)\n');
+    sections.push('\n## 📚 Context Files for Reference\n');
+    sections.push('**THESE files are provided for context and understanding relationships.**\n');
+    sections.push('- Use these to understand component APIs, import paths, and architectural patterns\n');
+    sections.push('- DO NOT modify these files unless they are explicitly mentioned in the user\'s request\n');
+    sections.push('- These files show you how components are connected and what dependencies exist\n\n');
+    
     for (const [path, content] of Object.entries(contextFiles)) {
       // Truncate very large context files to save tokens
       let truncatedContent = content;
@@ -335,13 +466,20 @@ ${content}
         truncatedContent = content.substring(0, 2000) + '\n// ... [truncated for context length]';
       }
       
-      sections.push(`### ${path}
+      sections.push(`### ${path} (Reference Only)
 \`\`\`${getFileExtension(path)}
 ${truncatedContent}
 \`\`\`
 `);
     }
   }
+  
+  // Add final instructions
+  sections.push('\n## 🎯 Instructions\n');
+  sections.push('1. **Focus on "Files to Edit"** - These are your primary targets\n');
+  sections.push('2. **Reference "Context Files"** - Use these to understand relationships and APIs\n');
+  sections.push('3. **Maintain consistency** - Follow patterns shown in the context files\n');
+  sections.push('4. **Preserve existing functionality** - Only change what the user specifically requested\n');
   
   return sections.join('\n');
 }

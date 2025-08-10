@@ -6,6 +6,7 @@ import { streamText } from 'ai';
 import type { SandboxState } from '@/types/sandbox';
 import { selectFilesForEdit, getFileContents, formatFilesForAI } from '@/lib/context-selector';
 import { executeSearchPlan, formatSearchResultsForAI, selectTargetFile } from '@/lib/file-search-executor';
+import { buildConversationHistoryPrompt, updateConversationMemory } from '@/lib/conversation-memory';
 import { FileManifest } from '@/types/file-manifest';
 import type { ConversationState, ConversationMessage, ConversationEdit } from '@/types/conversation';
 import { appConfig } from '@/config/app.config';
@@ -23,44 +24,7 @@ const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Helper function to analyze user preferences from conversation history
-function analyzeUserPreferences(messages: ConversationMessage[]): {
-  commonPatterns: string[];
-  preferredEditStyle: 'targeted' | 'comprehensive';
-} {
-  const userMessages = messages.filter(m => m.role === 'user');
-  const patterns: string[] = [];
-  
-  // Count edit-related keywords
-  let targetedEditCount = 0;
-  let comprehensiveEditCount = 0;
-  
-  userMessages.forEach(msg => {
-    const content = msg.content.toLowerCase();
-    
-    // Check for targeted edit patterns
-    if (content.match(/\b(update|change|fix|modify|edit|remove|delete)\s+(\w+\s+)?(\w+)\b/)) {
-      targetedEditCount++;
-    }
-    
-    // Check for comprehensive edit patterns
-    if (content.match(/\b(rebuild|recreate|redesign|overhaul|refactor)\b/)) {
-      comprehensiveEditCount++;
-    }
-    
-    // Extract common request patterns
-    if (content.includes('hero')) patterns.push('hero section edits');
-    if (content.includes('header')) patterns.push('header modifications');
-    if (content.includes('color') || content.includes('style')) patterns.push('styling changes');
-    if (content.includes('button')) patterns.push('button updates');
-    if (content.includes('animation')) patterns.push('animation requests');
-  });
-  
-  return {
-    commonPatterns: [...new Set(patterns)].slice(0, 3), // Top 3 unique patterns
-    preferredEditStyle: targetedEditCount > comprehensiveEditCount ? 'targeted' : 'comprehensive'
-  };
-}
+
 
 declare global {
   var sandboxState: SandboxState;
@@ -88,12 +52,19 @@ export async function POST(request: NextRequest) {
           messages: [],
           edits: [],
           projectEvolution: { majorChanges: [] },
-          userPreferences: {}
+          userPreferences: {},
+          sessionSummary: {
+            totalInteractions: 0,
+            filesCreated: [],
+            filesModified: [],
+            packagesAdded: [],
+            componentsCreated: []
+          }
         }
       };
     }
     
-    // Add user message to conversation history
+    // Create user message for tracking
     const userMessage: ConversationMessage = {
       id: `msg-${Date.now()}`,
       role: 'user',
@@ -103,7 +74,6 @@ export async function POST(request: NextRequest) {
         sandboxId: context?.sandboxId
       }
     };
-    global.conversationState.context.messages.push(userMessage);
     
     // Clean up old messages to prevent unbounded growth
     if (global.conversationState.context.messages.length > 20) {
@@ -474,79 +444,51 @@ Remember: You are a SURGEON making a precise incision, not an artist repainting 
           }
         }
         
-        // Build conversation context for system prompt
-        let conversationContext = '';
-        if (global.conversationState && global.conversationState.context.messages.length > 1) {
-          console.log('[generate-ai-code-stream] Building conversation context');
-          console.log('[generate-ai-code-stream] Total messages:', global.conversationState.context.messages.length);
-          console.log('[generate-ai-code-stream] Total edits:', global.conversationState.context.edits.length);
-          
-          conversationContext = `\n\n## Conversation History (Recent)\n`;
-          
-          // Include only the last 3 edits to save context
-          const recentEdits = global.conversationState.context.edits.slice(-3);
-          if (recentEdits.length > 0) {
-            console.log('[generate-ai-code-stream] Including', recentEdits.length, 'recent edits in context');
-            conversationContext += `\n### Recent Edits:\n`;
-            recentEdits.forEach(edit => {
-              conversationContext += `- "${edit.userRequest}" → ${edit.editType} (${edit.targetFiles.map(f => f.split('/').pop()).join(', ')})\n`;
-            });
-          }
-          
-          // Include recently created files - CRITICAL for preventing duplicates
-          const recentMsgs = global.conversationState.context.messages.slice(-5);
-          const recentlyCreatedFiles: string[] = [];
-          recentMsgs.forEach(msg => {
-            if (msg.metadata?.editedFiles) {
-              recentlyCreatedFiles.push(...msg.metadata.editedFiles);
-            }
-          });
-          
-          if (recentlyCreatedFiles.length > 0) {
-            const uniqueFiles = [...new Set(recentlyCreatedFiles)];
-            conversationContext += `\n### 🚨 RECENTLY CREATED/EDITED FILES (DO NOT RECREATE THESE):\n`;
-            uniqueFiles.forEach(file => {
-              conversationContext += `- ${file}\n`;
-            });
-            conversationContext += `\nIf the user mentions any of these components, UPDATE the existing file!\n`;
-          }
-          
-          // Include only last 5 messages for context (reduced from 10)
-          const recentMessages = recentMsgs;
-          if (recentMessages.length > 2) { // More than just current message
-            conversationContext += `\n### Recent Messages:\n`;
-            recentMessages.slice(0, -1).forEach(msg => { // Exclude current message
-              if (msg.role === 'user') {
-                const truncatedContent = msg.content.length > 100 ? msg.content.substring(0, 100) + '...' : msg.content;
-                conversationContext += `- "${truncatedContent}"\n`;
-              }
-            });
-          }
-          
-          // Include only last 2 major changes
-          const majorChanges = global.conversationState.context.projectEvolution.majorChanges.slice(-2);
-          if (majorChanges.length > 0) {
-            conversationContext += `\n### Recent Changes:\n`;
-            majorChanges.forEach(change => {
-              conversationContext += `- ${change.description}\n`;
-            });
-          }
-          
-          // Keep user preferences - they're concise
-          const userPrefs = analyzeUserPreferences(global.conversationState.context.messages);
-          if (userPrefs.commonPatterns.length > 0) {
-            conversationContext += `\n### User Preferences:\n`;
-            conversationContext += `- Edit style: ${userPrefs.preferredEditStyle}\n`;
-          }
-          
-          // Limit total conversation context length
-          if (conversationContext.length > 2000) {
-            conversationContext = conversationContext.substring(0, 2000) + '\n[Context truncated to prevent length errors]';
-          }
-        }
+        // Build conversation context for system prompt using new memory system
+        const conversationContext = buildConversationHistoryPrompt(global.conversationState);
         
         // Build system prompt with conversation awareness
         const systemPrompt = `You are an expert React developer with perfect memory of the conversation. You maintain context across messages and remember scraped websites, generated components, and applied code. Generate clean, modern React code for Vite applications.
+
+## 🎯 SMART CONTEXT UNDERSTANDING
+When you receive file context, it will be organized into two important categories:
+
+### 📝 Files to Edit
+- These are the PRIMARY files you should modify to fulfill the user's request
+- Focus your changes on these files ONLY
+- These files have been intelligently selected based on the user's request and code relationships
+
+### 📚 Context Files for Reference  
+- These provide supporting context to understand component relationships and APIs
+- Use these to understand how components connect and what patterns to follow
+- DO NOT modify these files unless explicitly requested by the user
+- These help you make informed decisions about the primary files
+
+## 🧠 INTELLIGENT CONTEXT USAGE
+The context selection system has analyzed:
+- Import relationships between files
+- Component dependency trees
+- Which files are most relevant to the user's request
+
+This means:
+- The "Files to Edit" section contains exactly what you need to change
+- The "Context Files" show you the broader picture without overwhelming you
+- You can trust this smart selection instead of trying to modify everything
+
+## 🔮 ENHANCED CONVERSATION MEMORY
+You have access to comprehensive conversation memory that includes:
+- **Recent interactions**: User requests and your corresponding actions
+- **File tracking**: Complete history of files created, modified, and deleted in this session
+- **Component tracking**: All React components you've built and their relationships
+- **User patterns**: Analysis of the user's preferred editing style and common requests
+- **Session evolution**: How the project has developed over time
+
+Use this memory to:
+- Avoid recreating existing components (check the session summary for what's already been built)
+- Maintain consistency with previous decisions and patterns
+- Reference earlier work when building related features
+- Understand the user's communication style and preferences
+
 ${conversationContext}
 
 🚨 CRITICAL RULES - YOUR MOST IMPORTANT INSTRUCTIONS:
@@ -1657,6 +1599,29 @@ Provide the complete file content without any truncation. Include all necessary 
           packagesToInstall: packagesToInstall.length > 0 ? packagesToInstall : undefined,
           warnings: truncationWarnings.length > 0 ? truncationWarnings : undefined
         });
+
+        // Update conversation memory with the AI response
+        if (global.conversationState) {
+          const appliedFiles = files.map(file => ({
+            path: file.path,
+            action: 'created' as const, // For now, assume all files are created/modified
+            size: file.content.length,
+            componentName: file.path.includes('components/') ? 
+              file.path.split('/').pop()?.replace(/\.(jsx|tsx)$/, '') : undefined
+          }));
+
+          // Update memory with comprehensive response data
+          updateConversationMemory(global.conversationState, userMessage, {
+            generatedCode,
+            appliedFiles,
+            actionSummary: explanation || `Generated ${files.length} file${files.length !== 1 ? 's' : ''}${componentCount > 0 ? ` with ${componentCount} component${componentCount !== 1 ? 's' : ''}` : ''}`,
+            fileCount: files.length,
+            componentCount,
+            packagesToInstall: packagesToInstall.length > 0 ? packagesToInstall : undefined
+          });
+
+          console.log('[generate-ai-code-stream] Updated conversation memory with AI response');
+        }
         
         // Track edit in conversation history
         if (isEdit && editContext && global.conversationState) {
