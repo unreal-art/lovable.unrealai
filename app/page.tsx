@@ -74,6 +74,22 @@ export default function AISandboxPage() {
   const [homeUrlInput, setHomeUrlInput] = useState('');
   const [homeContextInput, setHomeContextInput] = useState('');
   const [activeTab, setActiveTab] = useState<'generation' | 'preview'>('preview');
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Click outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsModelDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
   const [showStyleSelector, setShowStyleSelector] = useState(false);
   const [selectedStyle, setSelectedStyle] = useState<string | null>(null);
   const [showLoadingBackground, setShowLoadingBackground] = useState(false);
@@ -3069,31 +3085,55 @@ Focus on the key sections and content, making it clean and modern.`;
               </form>
               
               {/* Model Selector */}
-              <div className="mt-6 flex items-center justify-center animate-[fadeIn_1s_ease-out]">
-                <label htmlFor="ai-model-selector-home" className="sr-only">
-                  Select AI model
-                </label>
-                <select
-                  id="ai-model-selector-home"
-                  value={aiModel}
-                  onChange={(e) => {
-                    const newModel = e.target.value;
-                    setAiModel(newModel);
-                    const params = new URLSearchParams(searchParams);
-                    params.set('model', newModel);
-                    if (sandboxData?.sandboxId) {
-                      params.set('sandbox', sandboxData.sandboxId);
-                    }
-                    router.push(`/?${params.toString()}`);
-                  }}
-                  className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-[#36322F] focus:border-transparent model-selector-shadow"
-                >
-                  {appConfig.ai.availableModels.map(model => (
-                    <option key={model} value={model}>
-                      {appConfig.ai.modelDisplayNames[model] || model}
-                    </option>
-                  ))}
-                </select>
+              <div className="mt-6 flex flex-col items-center justify-center animate-[fadeIn_1s_ease-out]">
+                <div className="text-xs font-medium text-[#605A57]/70 mb-2 tracking-wide uppercase">
+                  AI Model
+                </div>
+                <div className="custom-dropdown" ref={dropdownRef}>
+                  <label className="sr-only">
+                    Select AI model
+                  </label>
+                  <div 
+                    className={`dropdown-trigger model-selector-shadow px-4 py-2.5 text-sm font-medium text-[#36322F] rounded-[12px] min-w-[180px] ${isModelDropdownOpen ? 'open' : ''}`}
+                    onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
+                  >
+                    <div className="flex items-center">
+                      <span className="model-icon">🤖</span>
+                      <span>{appConfig.ai.modelDisplayNames[aiModel] || aiModel}</span>
+                    </div>
+                    <div className={`dropdown-icon ${isModelDropdownOpen ? 'open' : ''}`}>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M4 6L8 10L12 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </div>
+                  </div>
+                  
+                  <div className={`dropdown-options ${isModelDropdownOpen ? 'open' : ''}`}>
+                    {appConfig.ai.availableModels.map(model => (
+                      <div
+                        key={model}
+                        className={`dropdown-option ${model === aiModel ? 'selected' : ''}`}
+                        onClick={() => {
+                          setAiModel(model);
+                          const params = new URLSearchParams(searchParams);
+                          params.set('model', model);
+                          if (sandboxData?.sandboxId) {
+                            params.set('sandbox', sandboxData.sandboxId);
+                          }
+                          router.push(`/?${params.toString()}`);
+                          setIsModelDropdownOpen(false);
+                        }}
+                      >
+                        <span className="model-icon">
+                          {model.includes('gpt') ? '🧠' : 
+                           model.includes('claude') ? '🎭' : 
+                           model.includes('kimi') ? '🌙' : '🤖'}
+                        </span>
+                        <span>{appConfig.ai.modelDisplayNames[model] || model}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
