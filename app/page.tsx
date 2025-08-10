@@ -2944,7 +2944,6 @@ Focus on the key sections and content, making it clean and modern.`;
                         setSelectedStyle(null);
                       }
                     }}
-                    placeholder="https://firecrawl.dev"
                     aria-label="Enter website URL to redesign"
                     className="h-[3.25rem] w-full resize-none focus-visible:outline-none focus-visible:ring-orange-500 focus-visible:ring-2 rounded-[18px] text-sm text-[#36322F] px-4 pr-12 border-[.75px] border-border bg-white url-input-shadow"
                     autoFocus
