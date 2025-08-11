@@ -27,6 +27,11 @@ FIRECRAWL_API_KEY=your_firecrawl_api_key  # Get from https://firecrawl.dev (Web 
 ANTHROPIC_API_KEY=your_anthropic_api_key  # Get from https://console.anthropic.com
 OPENAI_API_KEY=your_openai_api_key  # Get from https://platform.openai.com (GPT-5)
 GROQ_API_KEY=your_groq_api_key  # Get from https://console.groq.com (Fast inference - Kimi K2 recommended)
+
+# Unreal (OpenAI-compatible) — recommended
+UNREAL_API_KEY=your_unreal_api_key  # Get from your Unreal deployment
+# Optional, defaults to https://openai.unreal.art/v1
+UNREAL_BASE_URL=https://openai.unreal.art/v1
 ```
 
 3. **Run**

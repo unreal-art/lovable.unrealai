@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createGroq } from '@ai-sdk/groq';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
+import { appConfig } from '@/config/app.config';
 import { streamText } from 'ai';
 import type { SandboxState } from '@/types/sandbox';
 
@@ -18,6 +19,12 @@ const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Unreal provider (OpenAI-compatible)
+const unreal = createOpenAI({
+  apiKey: process.env.UNREAL_API_KEY,
+  baseURL: process.env.UNREAL_BASE_URL || 'https://openai.unreal.art/v1',
+});
+
 declare global {
   var activeSandbox: any;
   var sandboxState: SandboxState;
@@ -31,7 +38,7 @@ export async function POST(request: NextRequest) {
       errorType = 'unknown',
       line,
       column,
-      model = 'anthropic/claude-3-haiku' 
+      model = appConfig.ai.defaultModel 
     } = await request.json();
     
     console.log('[resolve-vite-error] Received error resolution request:');
@@ -161,9 +168,19 @@ The file could not be read. Based on the error message, provide guidance on what
     // Determine which AI provider to use
     const isAnthropic = model.startsWith('anthropic/');
     const isOpenAI = model.startsWith('openai/');
-    const modelProvider = isAnthropic ? anthropic : (isOpenAI ? openai : groq);
-    const actualModel = isAnthropic ? model.replace('anthropic/', '') : 
-                       isOpenAI ? model.replace('openai/', '') : model;
+    const isGroq = model.startsWith('groq/');
+    const isUnreal = model.startsWith('unreal::');
+
+    const modelProvider = isUnreal ? unreal : (isAnthropic ? anthropic : (isOpenAI ? openai : groq));
+    const actualModel = isUnreal
+      ? model
+      : isAnthropic
+        ? model.replace('anthropic/', '')
+        : isOpenAI
+          ? model.replace('openai/', '')
+          : isGroq
+            ? model.replace('groq/', '')
+            : model;
 
     // Make streaming API call
     const result = await streamText({
@@ -187,7 +204,7 @@ The file could not be read. Based on the error message, provide guidance on what
     // Parse the response based on error type
     if (errorType === 'npm-missing') {
       // Extract install command
-      const installMatch = fullResponse.match(/<install>(.*?)<\/install>/s);
+      const installMatch = fullResponse.match(/<install>([\s\S]*?)<\/install>/);
       if (installMatch) {
         const installCommand = installMatch[1].trim();
         return NextResponse.json({

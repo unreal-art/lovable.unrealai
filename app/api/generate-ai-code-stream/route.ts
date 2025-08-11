@@ -24,6 +24,12 @@ const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Unreal provider (OpenAI-compatible)
+const unreal = createOpenAI({
+  apiKey: process.env.UNREAL_API_KEY,
+  baseURL: process.env.UNREAL_BASE_URL || 'https://openai.unreal.art/v1',
+});
+
 // --- Model Mapping ---
 const modelMapping: { [key: string]: string } = {
   'groq/llama3-8b-8192': 'llama3-8b-8192',
@@ -44,7 +50,7 @@ declare global {
 
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, model = 'openai/gpt-oss-20b', context, isEdit = false } = await request.json();
+    const { prompt, model = appConfig.ai.defaultModel, context, isEdit = false } = await request.json();
 
     console.log('[generate-ai-code-stream] Received request:', { model, isEdit, sandboxId: context?.sandboxId });
 
@@ -198,9 +204,21 @@ ${enhancedSystemPrompt}`;
         await sendProgress({ type: 'status', message: 'Generating code...' });
 
         // AI Model and Provider Selection
+        const isAnthropic = model.startsWith('anthropic/');
         const isOpenAI = model.startsWith('openai/');
-        const modelProvider = model.startsWith('anthropic/') ? anthropic : (isOpenAI ? openai : groq);
-        const actualModel = modelMapping[model] || model;
+        const isGroq = model.startsWith('groq/');
+        const isUnreal = model.startsWith('unreal::');
+
+        const modelProvider = isUnreal ? unreal : (isAnthropic ? anthropic : (isOpenAI ? openai : groq));
+        const actualModel = isUnreal
+          ? model
+          : isAnthropic
+            ? model.replace('anthropic/', '')
+            : isOpenAI
+              ? (modelMapping[model] || model.replace('openai/', ''))
+              : isGroq
+                ? (modelMapping[model] || model.replace('groq/', ''))
+                : model;
 
         // Stream Text API Call
         const result = await streamText({
