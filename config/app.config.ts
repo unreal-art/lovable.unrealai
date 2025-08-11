@@ -32,16 +32,12 @@ export const appConfig = {
     
     // Available models
     availableModels: [
-      'unreal::reel',
-      'unreal::reel-v1',
+      // Removed non-code-generation models: reel*, flux*, firesearch-ocr-v6, qwen2p5-vl-32b-instruct, playground-v2.5-1024px-aesthetic
       'unreal::r1-1776',
-      'unreal::flux-1-dev-fp8',
       'unreal::llama4-scout-instruct-basic',
       'unreal::llama4-maverick-instruct-basic',
-      'unreal::firesearch-ocr-v6',
       'unreal::llama-v3p1-405b-instruct',
       'unreal::mixtral-8x22b-instruct',
-      'unreal::flux-kontext-max',
       'unreal::qwen3-coder-480b-a35b-instruct',
       'unreal::qwen3-235b-a22b-instruct-2507',
       'unreal::deepseek-r1-0528',
@@ -53,28 +49,19 @@ export const appConfig = {
       'unreal::qwen3-30b-a3b-thinking-2507',
       'unreal::glm-4p5',
       'unreal::dobby-unhinged-llama-3-3-70b-new',
-      'unreal::flux-1-schnell-fp8',
-      'unreal::flux-kontext-pro',
       'unreal::dobby-mini-unhinged-plus-llama-3-1-8b',
       'unreal::deepseek-v3',
       'unreal::qwen3-235b-a22b',
-      'unreal::kimi-k2-instruct',
-      'unreal::qwen2p5-vl-32b-instruct',
-      'unreal::playground-v2-5-1024px-aesthetic'
+      'unreal::kimi-k2-instruct'
     ],
     
     // Model display names
     modelDisplayNames: {
-      'unreal::reel': 'Reel',
-      'unreal::reel-v1': 'Reel v1',
       'unreal::r1-1776': 'R1 1776',
-      'unreal::flux-1-dev-fp8': 'Flux 1 Dev FP8',
       'unreal::llama4-scout-instruct-basic': 'Llama 4 Scout Instruct Basic',
       'unreal::llama4-maverick-instruct-basic': 'Llama 4 Maverick Instruct Basic',
-      'unreal::firesearch-ocr-v6': 'Firesearch OCR v6',
       'unreal::llama-v3p1-405b-instruct': 'Llama v3.1 405B Instruct',
       'unreal::mixtral-8x22b-instruct': 'Mixtral 8x22B Instruct',
-      'unreal::flux-kontext-max': 'Flux Kontext Max',
       'unreal::qwen3-coder-480b-a35b-instruct': 'Qwen3 Coder 480B A35B Instruct',
       'unreal::qwen3-235b-a22b-instruct-2507': 'Qwen3 235B A22B Instruct 2507',
       'unreal::deepseek-r1-0528': 'DeepSeek R1 0528',
@@ -86,14 +73,10 @@ export const appConfig = {
       'unreal::qwen3-30b-a3b-thinking-2507': 'Qwen3 30B A3B Thinking 2507',
       'unreal::glm-4p5': 'GLM 4.5',
       'unreal::dobby-unhinged-llama-3-3-70b-new': 'Dobby Unhinged Llama 3.3 70B New',
-      'unreal::flux-1-schnell-fp8': 'Flux 1 Schnell FP8',
-      'unreal::flux-kontext-pro': 'Flux Kontext Pro',
       'unreal::dobby-mini-unhinged-plus-llama-3-1-8b': 'Dobby Mini Unhinged Plus Llama 3.1 8B',
       'unreal::deepseek-v3': 'DeepSeek V3',
       'unreal::qwen3-235b-a22b': 'Qwen3 235B A22B',
-      'unreal::kimi-k2-instruct': 'Kimi K2 Instruct',
-      'unreal::qwen2p5-vl-32b-instruct': 'Qwen2.5 VL 32B Instruct',
-      'unreal::playground-v2-5-1024px-aesthetic': 'Playground v2.5 1024px Aesthetic'
+      'unreal::kimi-k2-instruct': 'Kimi K2 Instruct'
     },
     
     // Temperature settings for non-reasoning models
