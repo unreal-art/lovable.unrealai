@@ -340,6 +340,16 @@ ${enhancedSystemPrompt}`
           ? modelMapping[model] || model.replace("groq/", "")
           : model
 
+        console.log(
+          "[generate-ai-code-stream] Provider/model resolved:",
+          {
+            isUnreal,
+            actualModel,
+            UNREAL_BASE_URL: process.env.UNREAL_BASE_URL,
+            UNREAL_API_URL: process.env.UNREAL_API_URL,
+          }
+        )
+
         // Stream Text API Call
         const result = await streamText({
           model: modelProvider(actualModel),
