@@ -23,7 +23,7 @@ const openai = createOpenAI({
 // Unreal provider (OpenAI-compatible)
 const unreal = createOpenAI({
   apiKey: process.env.UNREAL_API_KEY,
-  baseURL: process.env.UNREAL_BASE_URL || "https://openai.unreal.art/v1",
+  baseURL: process.env.UNREAL_BASE_URL || "https://openai.ideomind.org/v1",
 })
 
 // Schema for the AI's search plan - not file selection!

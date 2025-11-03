@@ -31,7 +31,7 @@ GROQ_API_KEY=your_groq_api_key  # Get from https://console.groq.com (Fast infere
 # Unreal (OpenAI-compatible) — recommended
 UNREAL_API_KEY=your_unreal_api_key  # Get from your Unreal deployment
 # Optional base URL. You can use either of these (BASE_URL takes precedence if both are set):
-UNREAL_BASE_URL=https://openai.unreal.art/v1
+UNREAL_BASE_URL=https://openai.ideomind.org/v1
 # Or point to your self-hosted gateway:
 UNREAL_API_URL=http://localhost:8787/v1
 ```
